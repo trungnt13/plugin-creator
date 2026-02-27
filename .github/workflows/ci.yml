@@ -11,7 +11,7 @@ jobs:
   integration-test:
     name: Plugin Integration Test
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -24,110 +24,155 @@ jobs:
           npm install -g @github/copilot
           copilot --version
 
-      - name: Create dummy plugin using scaffold-plugin skill output
+      - name: Create test repo with fixtures
         run: |
-          mkdir -p /tmp/test-toolkit/.claude-plugin
-          mkdir -p /tmp/test-toolkit/agents
-          mkdir -p /tmp/test-toolkit/skills/deploy
-          mkdir -p /tmp/test-toolkit/commands
+          mkdir -p /tmp/test-repo
+          cd /tmp/test-repo
+          git init
+          git config user.email "ci@test.com"
+          git config user.name "CI"
 
-          # Plugin manifest
-          cat > /tmp/test-toolkit/.claude-plugin/plugin.json << 'EOF'
-          {
-            "name": "test-toolkit",
-            "version": "1.0.0",
-            "description": "A test toolkit plugin for CI validation",
-            "author": { "name": "CI Test" }
-          }
-          EOF
+          # .claude/ fixtures
+          mkdir -p .claude/agents .claude/skills .claude/commands
 
-          # Agent
-          cat > /tmp/test-toolkit/agents/code-reviewer.md << 'EOF'
-          ---
-          name: code-reviewer
-          description: Reviews code for best practices and potential issues
-          ---
-
+          cat > .claude/agents/code-reviewer.md << 'EOF'
+          # Code Reviewer
           You are a code review agent. Review code for best practices, bugs, and security issues.
-          Always check for:
-          1. Error handling
-          2. Security concerns
-          3. Test coverage
           EOF
 
-          # Skill (SKILL.md with frontmatter)
-          cat > /tmp/test-toolkit/skills/deploy/SKILL.md << 'EOF'
-          ---
-          name: deploy
-          description: Instructions for deploying applications to production environments
-          ---
+          cat > .claude/agents/test-writer.md << 'EOF'
+          # Test Writer
+          You are a test writing agent. Generate comprehensive test suites for code.
+          EOF
 
+          cat > .claude/skills/deploy.md << 'EOF'
           # Deploy Skill
-          When asked to deploy, follow these steps:
-          1. Run tests
-          2. Build the project
-          3. Deploy to the target environment
+          Instructions for deploying applications to production environments.
           EOF
 
-          # Command
-          cat > /tmp/test-toolkit/commands/lint.md << 'EOF'
+          cat > .claude/commands/lint.md << 'EOF'
+          # Lint
           Run linters across the project and fix any issues found.
-          Use the project's existing lint configuration.
           EOF
 
-          echo "✅ Dummy plugin created"
-          find /tmp/test-toolkit -type f | sort
+          cat > .claude/instructions.md << 'EOF'
+          # Project Instructions
+          This is a TypeScript project using Node.js. Follow standard conventions.
+          EOF
 
-      - name: Validate plugin structure
+          # .github/ fixtures
+          mkdir -p .github/agents
+
+          cat > .github/copilot-instructions.md << 'EOF'
+          # Copilot Instructions
+          Use TypeScript strict mode. Prefer functional patterns.
+          EOF
+
+          cat > .github/agents/security-scanner.md << 'EOF'
+          # Security Scanner
+          You scan code for security vulnerabilities and suggest fixes.
+          EOF
+
+          git add -A
+          git commit -m "Initial test fixtures"
+
+      - name: Use Copilot CLI to scaffold a plugin
+        env:
+          GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
         run: |
-          cd /tmp/test-toolkit
+          cd /tmp/test-repo
 
-          # Manifest exists and is valid JSON
-          python3 -m json.tool .claude-plugin/plugin.json > /dev/null
-          echo "✅ plugin.json is valid JSON"
+          # Load plugin-creator and invoke plugin-create skill to scaffold a dummy plugin
+          copilot -p "Use the plugin-create skill. \
+            Create a plugin called 'test-toolkit' with description 'A test toolkit plugin'. \
+            Include ALL agents, ALL skills, ALL commands, and ALL instructions found. \
+            Do NOT ask me any questions — include everything and generate the plugin. \
+            The author name is 'CI Test'." \
+            --plugin-dir "$GITHUB_WORKSPACE" \
+            --allowedTools "Bash,Read,Write,Edit" \
+            --max-turns 30
 
-          # Required fields present
+      - name: Verify generated plugin
+        run: |
+          cd /tmp/test-repo
+
+          # Plugin directory must exist
+          if [ ! -d "test-toolkit" ]; then
+            echo "❌ Plugin directory 'test-toolkit' not found"
+            find . -maxdepth 2 -not -path './.git/*' | sort
+            exit 1
+          fi
+          echo "✅ Plugin directory exists"
+
+          # Manifest must be valid JSON with required fields
+          MANIFEST="test-toolkit/.claude-plugin/plugin.json"
+          if [ ! -f "$MANIFEST" ]; then
+            MANIFEST="test-toolkit/plugin.json"
+          fi
+          if [ ! -f "$MANIFEST" ]; then
+            echo "❌ No plugin.json found"
+            find test-toolkit -type f | sort
+            exit 1
+          fi
+
+          python3 -m json.tool "$MANIFEST" > /dev/null
           python3 -c "
           import json
-          with open('.claude-plugin/plugin.json') as f:
+          with open('$MANIFEST') as f:
               p = json.load(f)
-          assert p['name'] == 'test-toolkit', f'Expected name test-toolkit, got {p[\"name\"]}'
-          assert p['version'] == '1.0.0'
-          assert p['description']
+          assert p.get('name'), 'Missing name'
+          assert p.get('version'), 'Missing version'
+          assert p.get('description'), 'Missing description'
           print(f'✅ Manifest: {p[\"name\"]} v{p[\"version\"]}')
           "
 
-          # Agent file exists and has content
-          test -s agents/code-reviewer.md
-          echo "✅ Agent: code-reviewer.md exists"
+          # Check agents exist
+          AGENT_COUNT=$(find test-toolkit/agents -name "*.md" 2>/dev/null | wc -l)
+          echo "✅ Agents: $AGENT_COUNT file(s)"
+          if [ "$AGENT_COUNT" -lt 1 ]; then
+            echo "❌ Expected at least 1 agent"
+            exit 1
+          fi
 
-          # Skill SKILL.md exists with frontmatter
-          test -s skills/deploy/SKILL.md
-          grep -q "^name: deploy" skills/deploy/SKILL.md
-          echo "✅ Skill: deploy/SKILL.md exists with frontmatter"
+          # Check skills exist (SKILL.md format)
+          SKILL_COUNT=$(find test-toolkit/skills -name "SKILL.md" 2>/dev/null | wc -l)
+          if [ "$SKILL_COUNT" -lt 1 ]; then
+            # Also check for flat .md skills
+            SKILL_COUNT=$(find test-toolkit/skills -name "*.md" 2>/dev/null | wc -l)
+          fi
+          echo "✅ Skills: $SKILL_COUNT file(s)"
+          if [ "$SKILL_COUNT" -lt 1 ]; then
+            echo "❌ Expected at least 1 skill"
+            exit 1
+          fi
 
-          # Command file exists
-          test -s commands/lint.md
-          echo "✅ Command: lint.md exists"
+          # Check commands exist
+          CMD_COUNT=$(find test-toolkit/commands -name "*.md" 2>/dev/null | wc -l)
+          echo "✅ Commands: $CMD_COUNT file(s)"
+          if [ "$CMD_COUNT" -lt 1 ]; then
+            echo "❌ Expected at least 1 command"
+            exit 1
+          fi
 
-      - name: Install plugin into Copilot CLI and verify
+          echo ""
+          echo "=== Generated plugin contents ==="
+          find test-toolkit -type f | sort
+
+      - name: Load generated plugin in Copilot CLI
         env:
-          ANTHROPIC_API_KEY: "dummy-key-for-plugin-load-only"
+          GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
         run: |
-          # Use --plugin-dir to load the plugin and verify it's recognized
-          # We just need to confirm the CLI accepts the plugin structure
-          # Use timeout since we don't have a real API key — we only care about plugin loading
-          timeout 10 claude --plugin-dir /tmp/test-toolkit -p "hello" 2>&1 || true
+          cd /tmp/test-repo
 
-          # Verify the plugin directory structure matches what Claude Code expects
-          echo ""
-          echo "=== Final plugin structure ==="
-          find /tmp/test-toolkit -type f | sort
+          if [ ! -d "test-toolkit" ]; then
+            echo "⚠️ Skipping — plugin not generated"
+            exit 0
+          fi
+
+          # Verify Copilot CLI can load the generated plugin
+          copilot -p "What plugins and skills do you have available?" \
+            --plugin-dir "./test-toolkit" \
+            --max-turns 3
 
           echo ""
-          echo "=== Verification Summary ==="
-          echo "✅ Plugin manifest:  .claude-plugin/plugin.json"
-          echo "✅ Agent:            agents/code-reviewer.md"
-          echo "✅ Skill:            skills/deploy/SKILL.md"
-          echo "✅ Command:          commands/lint.md"
-          echo "✅ All components present and valid"
+          echo "✅ Copilot CLI loaded the generated plugin successfully"
