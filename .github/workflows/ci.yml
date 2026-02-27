@@ -21,8 +21,8 @@ jobs:
 
       - name: Install Copilot CLI
         run: |
-          npm install -g @anthropic-ai/claude-code
-          claude --version
+          npm install -g @github/copilot
+          copilot --version
 
       - name: Create dummy plugin using scaffold-plugin skill output
         run: |
