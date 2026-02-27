@@ -1,3 +1,8 @@
+---
+name: scaffold-plugin
+description: Create a new Claude Code plugin by scanning the current repo's .claude/ and .github/ directories for agents, instructions, and skills. Use when the user asks to create, scaffold, or generate a plugin.
+---
+
 # Scaffold Plugin
 
 You are a plugin scaffolding assistant. Your job is to create a new Claude Code plugin by scanning the current repo's configuration directories and letting the user choose what to include.
@@ -101,72 +106,71 @@ Use `ask_user` for:
 
 ## Step 5: Generate the Plugin
 
-Create the plugin directory structure:
+Create the plugin directory structure using the official `.claude-plugin/` format:
 
 ```
 <plugin-name>/
-├── plugin.json
+├── .claude-plugin/
+│   └── plugin.json      # Plugin manifest
 ├── README.md
-├── agents/          (if agents selected)
+├── agents/              (if agents selected)
 │   └── *.md
-├── skills/          (if skills selected)
+├── skills/              (if skills selected)
+│   └── <skill-name>/
+│       └── SKILL.md
+├── commands/            (if commands selected)
 │   └── *.md
-├── instructions/    (if instructions selected)
-│   └── *.md
-└── commands/        (if commands selected)
-    └── *.md
+└── settings.json        (if instructions/settings selected)
 ```
 
-### 5a: Create plugin.json
+### 5a: Create .claude-plugin/plugin.json
 
-Generate `plugin.json` with this structure:
+Generate `.claude-plugin/plugin.json` with this structure:
 
 ```json
 {
   "name": "<plugin-name>",
   "version": "1.0.0",
   "description": "<user-provided-description>",
-  "agents": [
-    {
-      "name": "<agent-name-without-extension>",
-      "description": "<extracted-from-first-line-or-heading>",
-      "file": "agents/<filename>.md"
-    }
-  ],
-  "skills": [
-    {
-      "name": "<skill-name-without-extension>",
-      "description": "<extracted-from-first-line-or-heading>",
-      "file": "skills/<filename>.md"
-    }
-  ],
-  "instructions": [
-    "<instructions-filename>.md"
-  ],
-  "commands": [
-    {
-      "name": "<command-name-without-extension>",
-      "description": "<extracted-from-first-line-or-heading>",
-      "file": "commands/<filename>.md"
-    }
-  ]
+  "author": {
+    "name": "<git-user-name-or-ask>"
+  }
 }
 ```
 
 **Rules for plugin.json:**
-- Only include sections that have selected items
-- Extract descriptions from the first `#` heading or first non-empty line of each `.md` file
-- Names should be the filename without `.md` extension, in kebab-case
+- The manifest only needs name, version, description, and author
+- Skills, agents, and commands are auto-discovered from their directories
+- Do NOT list skills/agents/commands in plugin.json — Claude Code discovers them by convention
+
+### 5a-ii: Create skill SKILL.md files
+
+Each skill must be in its own directory with a `SKILL.md` file containing YAML frontmatter:
+
+```markdown
+---
+name: <skill-name>
+description: <extracted-from-first-line-or-heading>
+---
+
+<original skill content>
+```
+
+### 5a-iii: Copy agent and command files
+
+- Agent `.md` files go into `agents/` at the plugin root
+- Command `.md` files go into `commands/` at the plugin root
 - If a source file is from `.github/`, adapt it to Claude Code format during copy
 
 ### 5b: Copy Selected Files
 
 For each selected file:
 1. Read the source file content
-2. If sourced from `.github/`, perform any necessary adaptations:
-   - `.github/copilot-instructions.md` → rename to `instructions/copilot-instructions.md`
+2. If it's a skill file, create a `skills/<skill-name>/SKILL.md` with YAML frontmatter (name, description)
+3. If sourced from `.github/`, perform any necessary adaptations:
+   - `.github/copilot-instructions.md` → convert to a skill or merge into README
    - Adapt any GitHub Copilot-specific syntax to Claude Code equivalents where possible
-3. Create the file in the appropriate subdirectory of the plugin
+4. Create the file in the appropriate subdirectory of the plugin
 
 ### 5c: Generate README.md
 
@@ -223,6 +227,9 @@ Contents:
 
 Install with:
   /plugin install ./<plugin-name>
+
+Test with:
+  claude --plugin-dir ./<plugin-name>
 ```
 
 ---

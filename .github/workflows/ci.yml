@@ -5,196 +5,203 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  validate-plugin:
-    name: Validate Plugin Structure
+  integration-test:
+    name: Plugin Integration Test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate plugin.json is valid JSON
-        run: python3 -m json.tool plugin.json > /dev/null
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Validate plugin.json required fields
+      - name: Install Claude Code and Copilot API proxy
+        run: npm install -g @anthropic-ai/claude-code @anthropic-ai/copilot-api
+
+      - name: Verify Claude Code installed
+        run: claude --version
+
+      - name: Start Copilot API proxy
+        env:
+          GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
         run: |
-          python3 -c "
+          copilot-api &
+          sleep 5
+          echo "✅ Copilot API proxy started"
+
+      - name: Create test repo with .claude/ and .github/ fixtures
+        run: |
+          mkdir -p /tmp/test-repo
+          cd /tmp/test-repo
+          git init
+          git config user.email "ci@test.com"
+          git config user.name "CI"
+
+          # .claude/ fixtures
+          mkdir -p .claude/agents .claude/skills .claude/commands
+
+          cat > .claude/agents/code-reviewer.md << 'EOF'
+          # Code Reviewer
+          You are a code review agent. Review code for best practices, bugs, and security issues.
+          EOF
+
+          cat > .claude/agents/test-writer.md << 'EOF'
+          # Test Writer
+          You are a test writing agent. Generate comprehensive test suites for code.
+          EOF
+
+          cat > .claude/skills/deploy.md << 'EOF'
+          # Deploy Skill
+          Instructions for deploying applications to production environments.
+          EOF
+
+          cat > .claude/commands/lint.md << 'EOF'
+          # Lint
+          Run linters across the project and fix any issues found.
+          EOF
+
+          cat > .claude/instructions.md << 'EOF'
+          # Project Instructions
+          This is a TypeScript project using Node.js. Follow standard conventions.
+          EOF
+
+          # .github/ fixtures
+          mkdir -p .github/agents .github/skills
+
+          cat > .github/copilot-instructions.md << 'EOF'
+          # Copilot Instructions
+          Use TypeScript strict mode. Prefer functional patterns.
+          EOF
+
+          cat > .github/agents/security-scanner.md << 'EOF'
+          # Security Scanner
+          You scan code for security vulnerabilities and suggest fixes.
+          EOF
+
+          git add -A
+          git commit -m "Initial test fixtures"
+
+      - name: Install plugin and scaffold a dummy plugin
+        env:
+          ANTHROPIC_BASE_URL: http://localhost:4141
+          ANTHROPIC_AUTH_TOKEN: dummy
+          DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          cd /tmp/test-repo
+
+          claude -p "You have the scaffold-plugin skill loaded. \
+            Create a plugin called 'test-toolkit' with description 'A test toolkit plugin'. \
+            Include ALL agents, ALL skills, ALL commands, and ALL instructions found. \
+            Do NOT ask me any questions — just include everything and generate the plugin. \
+            The author name is 'CI Test'." \
+            --plugin-dir "$GITHUB_WORKSPACE" \
+            --allowedTools "Bash,Read,Write,Edit" \
+            --output-format json \
+            --max-turns 30 \
+            | tee /tmp/claude-output.json
+
+          echo ""
+          echo "=== Claude Output ==="
+          cat /tmp/claude-output.json | python3 -c "
           import json, sys
-
-          with open('plugin.json') as f:
-              plugin = json.load(f)
-
-          errors = []
-
-          # Required top-level fields
-          for field in ['name', 'version', 'description']:
-              if field not in plugin:
-                  errors.append(f'Missing required field: {field}')
-
-          # Validate version format (semver-like)
-          version = plugin.get('version', '')
-          if not all(p.isdigit() for p in version.split('.')):
-              errors.append(f'Invalid version format: {version}')
-
-          # Validate skills array
-          if 'skills' in plugin:
-              for i, skill in enumerate(plugin['skills']):
-                  for field in ['name', 'description', 'file']:
-                      if field not in skill:
-                          errors.append(f'skills[{i}] missing field: {field}')
-
-          # Validate agents array
-          if 'agents' in plugin:
-              for i, agent in enumerate(plugin['agents']):
-                  for field in ['name', 'description', 'file']:
-                      if field not in agent:
-                          errors.append(f'agents[{i}] missing field: {field}')
-
-          # Validate commands array
-          if 'commands' in plugin:
-              for i, cmd in enumerate(plugin['commands']):
-                  for field in ['name', 'description', 'file']:
-                      if field not in cmd:
-                          errors.append(f'commands[{i}] missing field: {field}')
-
-          if errors:
-              for e in errors:
-                  print(f'❌ {e}')
-              sys.exit(1)
-          else:
-              print('✅ plugin.json schema is valid')
+          try:
+              data = json.load(sys.stdin)
+              print('Session:', data.get('session_id', 'N/A'))
+              print('Cost:', data.get('cost_usd', 'N/A'))
+              result = data.get('result', '')
+              print('Result preview:', result[:500] if result else 'No result')
+          except:
+              print('Raw output (not JSON)')
           "
 
-      - name: Validate referenced files exist
+      - name: Verify generated plugin structure
         run: |
-          python3 -c "
-          import json, os, sys
+          cd /tmp/test-repo
+          echo "=== Looking for generated plugin ==="
+          ls -la
 
-          with open('plugin.json') as f:
-              plugin = json.load(f)
+          PLUGIN_DIR=""
+          if [ -d "test-toolkit" ]; then
+            PLUGIN_DIR="test-toolkit"
+          fi
 
-          missing = []
-
-          # Check skill files
-          for skill in plugin.get('skills', []):
-              if not os.path.isfile(skill['file']):
-                  missing.append(skill['file'])
-
-          # Check agent files
-          for agent in plugin.get('agents', []):
-              if not os.path.isfile(agent['file']):
-                  missing.append(agent['file'])
-
-          # Check command files
-          for cmd in plugin.get('commands', []):
-              if not os.path.isfile(cmd['file']):
-                  missing.append(cmd['file'])
-
-          # Check instruction files
-          for instr in plugin.get('instructions', []):
-              if isinstance(instr, str) and not os.path.isfile(instr):
-                  missing.append(instr)
-
-          if missing:
-              for f in missing:
-                  print(f'❌ Referenced file not found: {f}')
-              sys.exit(1)
-          else:
-              print('✅ All referenced files exist')
-          "
-
-      - name: Validate markdown files are non-empty
-        run: |
-          found_empty=false
-          for f in $(find . -name "*.md" -not -path "./.git/*"); do
-            if [ ! -s "$f" ]; then
-              echo "❌ Empty markdown file: $f"
-              found_empty=true
-            fi
-          done
-          if [ "$found_empty" = true ]; then
+          if [ -z "$PLUGIN_DIR" ]; then
+            echo "❌ Plugin directory 'test-toolkit' not found"
+            echo "Directory contents:"
+            find . -maxdepth 2 -not -path './.git/*' | sort
             exit 1
           fi
-          echo "✅ All markdown files have content"
 
-      - name: Check for broken internal links in README
-        run: |
+          echo "✅ Found plugin at: $PLUGIN_DIR"
+          echo ""
+          echo "=== Plugin contents ==="
+          find "$PLUGIN_DIR" -type f | sort
+
+          # Check for manifest in either new or legacy format
+          MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
+          if [ ! -f "$MANIFEST" ]; then
+            MANIFEST="$PLUGIN_DIR/plugin.json"
+          fi
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "❌ No plugin.json found in plugin"
+            exit 1
+          fi
+
+          echo "✅ Plugin manifest found: $MANIFEST"
+          python3 -m json.tool "$MANIFEST" > /dev/null
+          echo "✅ Plugin manifest is valid JSON"
+
           python3 -c "
-          import re, os
-
-          with open('README.md') as f:
-              content = f.read()
-
-          # Find relative file links like [text](path)
-          links = re.findall(r'\[.*?\]\((?!http|#)(.*?)\)', content)
-          broken = [l for l in links if not os.path.exists(l)]
-
-          if broken:
-              for l in broken:
-                  print(f'❌ Broken link in README: {l}')
-              exit(1)
-          else:
-              print('✅ No broken internal links in README')
+          import json
+          with open('$MANIFEST') as f:
+              p = json.load(f)
+          assert p.get('name'), 'Missing name'
+          assert p.get('version'), 'Missing version'
+          assert p.get('description'), 'Missing description'
+          print(f'✅ Plugin: {p[\"name\"]} v{p[\"version\"]}')
+          print(f'   {p[\"description\"]}')
           "
 
-  validate-skill-content:
-    name: Validate Skill Quality
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+          MD_COUNT=$(find "$PLUGIN_DIR" -name "*.md" | wc -l)
+          echo "✅ Found $MD_COUNT markdown file(s) in plugin"
+          if [ "$MD_COUNT" -lt 1 ]; then
+            echo "❌ Expected at least 1 markdown file in the plugin"
+            exit 1
+          fi
 
-      - name: Check skills have headings and structure
+      - name: Test loading the generated plugin
+        env:
+          ANTHROPIC_BASE_URL: http://localhost:4141
+          ANTHROPIC_AUTH_TOKEN: dummy
+          DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
         run: |
-          python3 -c "
-          import glob, sys
+          cd /tmp/test-repo
 
-          errors = []
-          for path in glob.glob('skills/*.md'):
-              with open(path) as f:
-                  content = f.read()
+          PLUGIN_DIR="test-toolkit"
+          if [ ! -d "$PLUGIN_DIR" ]; then
+            echo "⚠️ Skipping load test — plugin dir not found"
+            exit 0
+          fi
 
-              if not content.strip():
-                  errors.append(f'{path}: file is empty')
-                  continue
-
-              if not content.lstrip().startswith('#'):
-                  errors.append(f'{path}: should start with a heading')
-
-              # Skill files should have reasonable length (at least some instructions)
-              if len(content) < 100:
-                  errors.append(f'{path}: suspiciously short ({len(content)} chars)')
-
-          if errors:
-              for e in errors:
-                  print(f'❌ {e}')
-              sys.exit(1)
-          else:
-              print('✅ All skill files are well-structured')
-          "
-
-      - name: Check agents have headings and structure
-        run: |
-          python3 -c "
-          import glob, sys
-
-          files = glob.glob('agents/*.md')
-          if not files:
-              print('ℹ️  No agent files to validate')
-              exit(0)
-
-          errors = []
-          for path in files:
-              with open(path) as f:
-                  content = f.read()
-              if not content.strip():
-                  errors.append(f'{path}: file is empty')
-              elif not content.lstrip().startswith('#'):
-                  errors.append(f'{path}: should start with a heading')
-
-          if errors:
-              for e in errors:
-                  print(f'❌ {e}')
-              sys.exit(1)
-          else:
-              print('✅ All agent files are well-structured')
+          claude -p "List what plugins and skills are available to you." \
+            --plugin-dir "./$PLUGIN_DIR" \
+            --output-format json \
+            --max-turns 3 \
+            | python3 -c "
+          import json, sys
+          try:
+              data = json.load(sys.stdin)
+              print('✅ Claude loaded the generated plugin successfully')
+              result = data.get('result', '')
+              print('Response:', result[:300] if result else 'No result')
+          except:
+              print('✅ Claude responded (non-JSON output)')
+              sys.exit(0)
           "

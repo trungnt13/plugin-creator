@@ -13,7 +13,13 @@ When invoked, the `scaffold-plugin` skill:
 ## Installation
 
 ```bash
-/plugin install /path/to/plugin-creator
+/plugin install trungnt13/plugin-creator
+```
+
+Or test locally:
+
+```bash
+claude --plugin-dir /path/to/plugin-creator
 ```
 
 ## Usage
@@ -51,14 +57,14 @@ The skill will guide you through selecting which components to include.
 
 ```
 my-plugin/
-├── plugin.json          # Plugin manifest
+├── .claude-plugin/
+│   └── plugin.json      # Plugin manifest
 ├── README.md            # Auto-generated docs
 ├── agents/              # Selected agents
 │   └── *.md
 ├── skills/              # Selected skills
-│   └── *.md
-├── instructions/        # Selected instructions
-│   └── *.md
+│   └── <name>/
+│       └── SKILL.md
 └── commands/            # Selected commands
     └── *.md
 ```
