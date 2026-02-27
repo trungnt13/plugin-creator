@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-plugin:
+    name: Validate Plugin Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate plugin.json is valid JSON
+        run: python3 -m json.tool plugin.json > /dev/null
+
+      - name: Validate plugin.json required fields
+        run: |
+          python3 -c "
+          import json, sys
+
+          with open('plugin.json') as f:
+              plugin = json.load(f)
+
+          errors = []
+
+          # Required top-level fields
+          for field in ['name', 'version', 'description']:
+              if field not in plugin:
+                  errors.append(f'Missing required field: {field}')
+
+          # Validate version format (semver-like)
+          version = plugin.get('version', '')
+          if not all(p.isdigit() for p in version.split('.')):
+              errors.append(f'Invalid version format: {version}')
+
+          # Validate skills array
+          if 'skills' in plugin:
+              for i, skill in enumerate(plugin['skills']):
+                  for field in ['name', 'description', 'file']:
+                      if field not in skill:
+                          errors.append(f'skills[{i}] missing field: {field}')
+
+          # Validate agents array
+          if 'agents' in plugin:
+              for i, agent in enumerate(plugin['agents']):
+                  for field in ['name', 'description', 'file']:
+                      if field not in agent:
+                          errors.append(f'agents[{i}] missing field: {field}')
+
+          # Validate commands array
+          if 'commands' in plugin:
+              for i, cmd in enumerate(plugin['commands']):
+                  for field in ['name', 'description', 'file']:
+                      if field not in cmd:
+                          errors.append(f'commands[{i}] missing field: {field}')
+
+          if errors:
+              for e in errors:
+                  print(f'❌ {e}')
+              sys.exit(1)
+          else:
+              print('✅ plugin.json schema is valid')
+          "
+
+      - name: Validate referenced files exist
+        run: |
+          python3 -c "
+          import json, os, sys
+
+          with open('plugin.json') as f:
+              plugin = json.load(f)
+
+          missing = []
+
+          # Check skill files
+          for skill in plugin.get('skills', []):
+              if not os.path.isfile(skill['file']):
+                  missing.append(skill['file'])
+
+          # Check agent files
+          for agent in plugin.get('agents', []):
+              if not os.path.isfile(agent['file']):
+                  missing.append(agent['file'])
+
+          # Check command files
+          for cmd in plugin.get('commands', []):
+              if not os.path.isfile(cmd['file']):
+                  missing.append(cmd['file'])
+
+          # Check instruction files
+          for instr in plugin.get('instructions', []):
+              if isinstance(instr, str) and not os.path.isfile(instr):
+                  missing.append(instr)
+
+          if missing:
+              for f in missing:
+                  print(f'❌ Referenced file not found: {f}')
+              sys.exit(1)
+          else:
+              print('✅ All referenced files exist')
+          "
+
+      - name: Validate markdown files are non-empty
+        run: |
+          found_empty=false
+          for f in $(find . -name "*.md" -not -path "./.git/*"); do
+            if [ ! -s "$f" ]; then
+              echo "❌ Empty markdown file: $f"
+              found_empty=true
+            fi
+          done
+          if [ "$found_empty" = true ]; then
+            exit 1
+          fi
+          echo "✅ All markdown files have content"
+
+      - name: Check for broken internal links in README
+        run: |
+          python3 -c "
+          import re, os
+
+          with open('README.md') as f:
+              content = f.read()
+
+          # Find relative file links like [text](path)
+          links = re.findall(r'\[.*?\]\((?!http|#)(.*?)\)', content)
+          broken = [l for l in links if not os.path.exists(l)]
+
+          if broken:
+              for l in broken:
+                  print(f'❌ Broken link in README: {l}')
+              exit(1)
+          else:
+              print('✅ No broken internal links in README')
+          "
+
+  validate-skill-content:
+    name: Validate Skill Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check skills have headings and structure
+        run: |
+          python3 -c "
+          import glob, sys
+
+          errors = []
+          for path in glob.glob('skills/*.md'):
+              with open(path) as f:
+                  content = f.read()
+
+              if not content.strip():
+                  errors.append(f'{path}: file is empty')
+                  continue
+
+              if not content.lstrip().startswith('#'):
+                  errors.append(f'{path}: should start with a heading')
+
+              # Skill files should have reasonable length (at least some instructions)
+              if len(content) < 100:
+                  errors.append(f'{path}: suspiciously short ({len(content)} chars)')
+
+          if errors:
+              for e in errors:
+                  print(f'❌ {e}')
+              sys.exit(1)
+          else:
+              print('✅ All skill files are well-structured')
+          "
+
+      - name: Check agents have headings and structure
+        run: |
+          python3 -c "
+          import glob, sys
+
+          files = glob.glob('agents/*.md')
+          if not files:
+              print('ℹ️  No agent files to validate')
+              exit(0)
+
+          errors = []
+          for path in files:
+              with open(path) as f:
+                  content = f.read()
+              if not content.strip():
+                  errors.append(f'{path}: file is empty')
+              elif not content.lstrip().startswith('#'):
+                  errors.append(f'{path}: should start with a heading')
+
+          if errors:
+              for e in errors:
+                  print(f'❌ {e}')
+              sys.exit(1)
+          else:
+              print('✅ All agent files are well-structured')
+          "
