@@ -1,5 +1,5 @@
 ---
-name: scaffold-plugin
+name: plugin-create
 description: Create a new Claude Code plugin by scanning the current repo's .claude/ and .github/ directories for agents, instructions, and skills. Use when the user asks to create, scaffold, or generate a plugin.
 ---
 
