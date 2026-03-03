@@ -1,9 +1,9 @@
 {
-  "name": "plugin-creator",
-  "version": "1.0.0",
-  "description": "Scaffold new Claude Code plugins from existing repo agents, instructions, and skills. Supports both .claude/ and .github/ (Copilot CLI) configurations.",
+  "name": "create-plugin",
+  "version": "2.0.0",
+  "description": "Scaffold Claude Code skills, subagents, agents, and plugins. Scans .claude/, ~/.claude/, and .github/ for existing components and generates properly structured configurations.",
   "author": {
     "name": "trungnt13"
   },
-  "repository": "https://github.com/trungnt13/plugin-creator"
+  "repository": "https://github.com/trungnt13/create-plugin"
 }

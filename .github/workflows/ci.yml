@@ -83,9 +83,9 @@ jobs:
           cd /tmp/test-repo
 
           # Load plugin-creator and invoke plugin-create skill to scaffold a dummy plugin
-          copilot -p "Use the plugin-create skill. \
+          copilot -p "Use the create-plugin skill. \
             Create a plugin called 'test-toolkit' with description 'A test toolkit plugin'. \
-            Include ALL agents, ALL skills, ALL commands, and ALL instructions found. \
+            Include ALL agents, ALL skills, ALL commands, ALL instructions, ALL hooks, and ALL MCP configs found. \
             Do NOT ask me any questions — include everything and generate the plugin. \
             The author name is 'CI Test'." \
             --plugin-dir "$GITHUB_WORKSPACE" \

@@ -14,6 +14,10 @@ Generated plugins must follow the `.claude-plugin/` format:
 │       └── SKILL.md
 ├── commands/              (if commands selected)
 │   └── <command-name>.md
+├── hooks/                 (if hooks selected)
+│   └── hooks.json
+├── .mcp.json              (if MCP configs selected)
+├── .lsp.json              (if LSP configs selected)
 └── settings.json          (if instructions/settings selected)
 ```
 
@@ -32,7 +36,7 @@ Generated plugins must follow the `.claude-plugin/` format:
 
 Rules:
 - Only include name, version, description, and author
-- Skills, agents, and commands are auto-discovered from directories
+- Skills, agents, commands, hooks are auto-discovered from directories
 - Do NOT list components in plugin.json
 
 ## Skill Files
@@ -50,6 +54,8 @@ description: <extracted-from-first-heading-or-first-line>
 
 Extract `description` from the first `#` heading or first non-empty line of the source file.
 
+If the source skill has a directory with supporting files (reference.md, scripts/, templates/), copy the entire directory structure.
+
 ## Agent Files
 
 Copy `.md` files directly into `agents/`. Preserve all content including any existing frontmatter.
@@ -57,6 +63,31 @@ Copy `.md` files directly into `agents/`. Preserve all content including any exi
 ## Command Files
 
 Copy `.md` files directly into `commands/`. Preserve all content.
+
+## Hooks
+
+Extract the `hooks` object from settings files and place in `hooks/hooks.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [...],
+    "PostToolUse": [...],
+    "SubagentStart": [...],
+    "SubagentStop": [...]
+  }
+}
+```
+
+Preserve all hook configurations including matchers, commands, and types.
+
+## MCP Configs
+
+Copy `.mcp.json` to the plugin root. Preserve all server definitions.
+
+## LSP Configs
+
+Copy `.lsp.json` to the plugin root. Preserve all language server definitions.
 
 ## Instructions / Settings
 
